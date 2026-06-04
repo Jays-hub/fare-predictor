@@ -1,0 +1,23 @@
+name: monitor-freshness
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # ~3h after the 10:00 UTC collection
+    - cron: "0 1 * * *"    # ~3h after the 22:00 UTC collection
+  workflow_dispatch:
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install "psycopg[binary]"
+      - name: Check freshness
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/check_freshness.py
