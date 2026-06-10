@@ -10,16 +10,21 @@ concurrency:
   group: collect-fares
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Worst case (every combo exhausting retries on both passes) is ~25 min at
+    # 15 combos; rows persist per-combo, so a timeout only truncates a cycle.
+    timeout-minutes: 30
     steps:
       - name: Check out repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 

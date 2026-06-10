@@ -6,17 +6,21 @@ on:
     - cron: "0 1 * * *"    # ~3h after the 22:00 UTC collection
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   freshness:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install "psycopg[binary]"
+        # Pinned to match requirements.txt (the pinning source of truth).
+        run: pip install "psycopg[binary]==3.3.4"
       - name: Check freshness
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
