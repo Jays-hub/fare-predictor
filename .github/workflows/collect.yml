@@ -8,12 +8,12 @@ on:
 
 concurrency:
   group: collect-fares
-  cancel-in-progress: false   # if a run somehow overlaps, queue it, don't run two at once
+  cancel-in-progress: false
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20         # bound a stuck run so it can't burn minutes for hours
+    timeout-minutes: 20
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -30,5 +30,5 @@ jobs:
 
       - name: Run collector
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}   # injected from repo secret, never in code
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python scripts/collect.py
