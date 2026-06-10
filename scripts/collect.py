@@ -32,9 +32,19 @@ ROUTES = ["MCO", "LAS", "DEN"]
 # Trip shapes as FIXED calendar (dep, ret) pairs. These are anchors observed
 # every run — that repetition is what produces price trajectories. Do NOT
 # regenerate them from `today` each run (see build_date_pairs for why).
+#
+# Ladder policy: keep 3-5 staggered anchors per trip shape so there is always
+# a spread of days-to-departure in the panel. Expired anchors are skipped
+# automatically at run time; the freshness monitor emails when the horizon
+# drops below ~2 weeks. When adding anchors, keep the day-of-week shapes
+# consistent (3-day = Fri->Mon, 7-day = Mon->Mon) so trajectories stay
+# comparable across anchors.
 DATE_PAIRS = [
-    ("2026-06-26", "2026-06-29"),           # 3-day weekend, ~3 weeks out
-    ("2026-07-20", "2026-07-27"),           # 7-day trip, ~6 weeks out
+    ("2026-06-26", "2026-06-29"),           # 3-day weekend (Fri->Mon)
+    ("2026-07-10", "2026-07-13"),           # 3-day weekend (Fri->Mon)
+    ("2026-07-20", "2026-07-27"),           # 7-day trip (Mon->Mon)
+    ("2026-07-31", "2026-08-03"),           # 3-day weekend (Fri->Mon)
+    ("2026-08-17", "2026-08-24"),           # 7-day trip (Mon->Mon)
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +54,7 @@ FIELDNAMES = [
     "observed_at", "origin", "dest", "dep_date", "ret_date",
     "carrier", "cabin", "price", "stops", "nonstop", "duration_min",
     "dep_time_raw", "dep_hour", "dep_minute", "dep_dow", "source",
+    "price_level",
 ]
 
 
@@ -58,6 +69,13 @@ def build_date_pairs(anchor: date, specs: list[tuple[int, int]]) -> list[tuple[s
         ret = dep + timedelta(days=length)
         pairs.append((dep.isoformat(), ret.isoformat()))
     return pairs
+
+
+def live_date_pairs(pairs: list[tuple[str, str]], today_iso: str) -> list[tuple[str, str]]:
+    """Date-pairs whose departure hasn't passed. Expired anchors otherwise burn
+    a full retry budget per route on queries that can no longer succeed."""
+    return [(dep, ret) for dep, ret in pairs if dep >= today_iso]
+
 
 def fetch_with_retry(
     flight_data: list[FlightData],
@@ -158,11 +176,16 @@ def parse_result(
     Dedups the best-listed-twice quirk, filters to the carriers we track,
     parses price/duration, and stamps each row with query metadata + a single
     shared observed_at. Price is the round-trip TOTAL for that outbound option
-    (pending live-UI verification)."""
+    (confirmed against the live UI)."""
     if observed_at is None:
         observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if carriers is None:
         carriers = {"Delta", "Frontier"}
+
+    # Google's own low/typical/high verdict for this query — one value per
+    # Result, denormalized onto every row. It can't be backfilled, and it is
+    # both a must-beat baseline ("buy iff Google says low") and a feature.
+    price_level = (result.current_price or "").strip().lower() or None
 
     rows: list[dict] = []
     seen: set[tuple] = set()
@@ -199,6 +222,7 @@ def parse_result(
             "duration_min": _duration_to_minutes(f.duration),
             **dep,                         # dep_time_raw, dep_hour, dep_minute, dep_dow
             "source": source,
+            "price_level": price_level,
         })
 
     return rows
@@ -227,15 +251,21 @@ _INSERT_SQL = """
 INSERT INTO snapshots (
     observed_at, origin, dest, dep_date, ret_date, carrier, cabin,
     price, stops, nonstop, duration_min, dep_time_raw, dep_hour,
-    dep_minute, dep_dow, source
+    dep_minute, dep_dow, source, price_level
 ) VALUES (
     %(observed_at)s, %(origin)s, %(dest)s, %(dep_date)s, %(ret_date)s,
     %(carrier)s, %(cabin)s, %(price)s, %(stops)s, %(nonstop)s,
     %(duration_min)s, %(dep_time_raw)s, %(dep_hour)s, %(dep_minute)s,
-    %(dep_dow)s, %(source)s
+    %(dep_dow)s, %(source)s, %(price_level)s
 )
 ON CONFLICT DO NOTHING
 """
+
+# Idempotent micro-migration (price_level added 2026-06-10). Running it inline
+# means the scheduled runner can never race a manual ALTER and drop a cycle's
+# rows — there is no window where the INSERT references a missing column.
+# Canonical DDL lives in db/schema.sql.
+_ENSURE_SCHEMA_SQL = "ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS price_level text"
 
 
 def save_to_postgres(rows: list[dict]) -> int:
@@ -254,10 +284,15 @@ def save_to_postgres(rows: list[dict]) -> int:
     try:
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
+                cur.execute(_ENSURE_SCHEMA_SQL)
                 cur.executemany(_INSERT_SQL, rows)
+                # psycopg3 accumulates affected rows across executemany, so this
+                # is the real insert count — ON CONFLICT skips don't inflate it.
+                inserted = cur.rowcount if cur.rowcount >= 0 else len(rows)
             conn.commit()                         # explicit; no-op if context already commits
-        log.info("postgres: wrote %d rows", len(rows))   # success is now visible
-        return len(rows)
+        log.info("postgres: wrote %d rows (%d duplicate(s) skipped)",
+                 inserted, len(rows) - inserted)
+        return inserted
     except Exception as e:
         log.error("postgres write failed (%s); rows kept in CSV only", type(e).__name__)
         return 0
@@ -292,7 +327,15 @@ def run_once() -> None:
     """One cycle. First pass over every combo; failures get a single second
     pass after a longer cooldown to decorrelate from transient blocking."""
     observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    combos = [(dest, dep, ret) for dest in ROUTES for dep, ret in DATE_PAIRS]
+
+    # UTC date, consistent with the days_to_dep convention in trajectories.py.
+    today = datetime.now(timezone.utc).date().isoformat()
+    pairs = live_date_pairs(DATE_PAIRS, today)
+    for dep, ret in DATE_PAIRS:
+        if (dep, ret) not in pairs:
+            log.warning("skipping expired date-pair %s/%s (departed)", dep, ret)
+
+    combos = [(dest, dep, ret) for dest in ROUTES for dep, ret in pairs]
     total = 0
 
     failed = []

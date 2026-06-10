@@ -26,7 +26,7 @@ import pandas as pd
 
 _COLUMNS = (
     "observed_at, origin, dest, dep_date, ret_date, carrier, cabin, price, "
-    "stops, nonstop, duration_min, dep_hour, dep_minute, dep_dow"
+    "stops, nonstop, duration_min, dep_hour, dep_minute, dep_dow, price_level"
 )
 
 
