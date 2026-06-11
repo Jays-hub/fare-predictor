@@ -1,16 +1,18 @@
 -- Schema for the Neon `snapshots` table (the source of truth for collected fares).
 --
--- STATUS: reconstructed 2026-06-10 from the collector's column list — the live
--- table was created ad hoc before this file existed. Verify against the live DB:
+-- STATUS: indexes verified against live pg_indexes on 2026-06-11. Column
+-- names/types are still reconstructed from the collector's column list (the
+-- live table was created ad hoc before this file existed); to double-check:
 --
---     psql "$DATABASE_URL" -c '\d snapshots'
+--     SELECT column_name, data_type, is_nullable FROM information_schema.columns
+--       WHERE table_name = 'snapshots' ORDER BY ordinal_position;
 --
--- and replace these definitions with the real output if they differ. The unique
--- index matters most: it is the write-time dedup contract that the collector's
--- ON CONFLICT DO NOTHING relies on (the INSERT names no conflict target, so it
--- depends on a unique index existing).
+-- The unique dedup index matters most: it is the write-time dedup contract that
+-- the collector's ON CONFLICT DO NOTHING relies on (the INSERT names no conflict
+-- target, so it fires on any unique violation).
 
 CREATE TABLE IF NOT EXISTS snapshots (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- surrogate key (flavor inferred from snapshots_pkey; confirm via the columns query)
     observed_at   timestamptz NOT NULL,   -- one shared timestamp per collection cycle (UTC)
     origin        text        NOT NULL,
     dest          text        NOT NULL,
@@ -30,11 +32,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
     price_level   text                    -- Google's low/typical/high verdict for the query
 );
 
--- Write-time dedup. Column set chosen to identify one observed flight option
--- within one cycle; re-running a cycle's insert is then a no-op.
-CREATE UNIQUE INDEX IF NOT EXISTS snapshots_dedup_idx ON snapshots (
+-- Write-time dedup (verified live 2026-06-11): one row per outbound option
+-- per cycle, keyed by carrier + departure time + price. Re-running a cycle's
+-- insert is a no-op. NULL dep_hour/dep_minute rows are never dedup'd here
+-- (NULLS DISTINCT default), but the parse layer already drops/dedups those.
+CREATE UNIQUE INDEX IF NOT EXISTS snapshots_dedup ON snapshots (
     observed_at, origin, dest, dep_date, ret_date, carrier,
-    dep_time_raw, price, stops, duration_min
+    dep_hour, dep_minute, price
 );
 
 -- Micro-migrations (each also self-applied by collect.py on every run):
