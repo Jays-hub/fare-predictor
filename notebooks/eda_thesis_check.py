@@ -26,8 +26,10 @@ import pandas as pd
 # Make scripts/trajectories.py importable regardless of where the interactive
 # window's cwd is. Walk up until we find the repo root (the dir containing scripts/).
 here = Path.cwd()
+REPO_ROOT = None
 for cand in [here, *here.parents]:
     if (cand / "scripts" / "trajectories.py").exists():
+        REPO_ROOT = cand
         sys.path.insert(0, str(cand / "scripts"))
         break
 else:
@@ -37,6 +39,22 @@ import trajectories as T  # noqa: E402
 
 pd.set_option("display.width", 120)
 pd.set_option("display.max_columns", 30)
+
+# Dual-mode rendering. In VSCode's interactive window, plot cells show inline as
+# usual. For a reproducible headless run (`EDA_SAVE_FIGS=1 python notebooks/...`),
+# figures are written to notebooks/figures/ instead — that dir is gitignored
+# because the plots are derived from the private fare data. Use _emit(fig, name)
+# wherever a cell would otherwise call plt.show().
+FIG_DIR = REPO_ROOT / "notebooks" / "figures"
+_SAVE_FIGS = bool(os.environ.get("EDA_SAVE_FIGS"))
+
+
+def _emit(fig, name):
+    if _SAVE_FIGS:
+        FIG_DIR.mkdir(parents=True, exist_ok=True)
+        fig.savefig(FIG_DIR / f"{name}.png", dpi=120, bbox_inches="tight")
+        print(f"saved figure: notebooks/figures/{name}.png")
+    plt.show()
 
 # %% [markdown]
 # ## Load + sanity check
@@ -101,7 +119,7 @@ for dest in sorted(mins.dest.unique()):
     ax.legend(fontsize=7)
     fig.autofmt_xdate()
     plt.tight_layout()
-    plt.show()
+    _emit(fig, f"thesisA_{dest}")
 
 # %% [markdown]
 # ## Thesis B — Delta vs Frontier co-movement
@@ -123,7 +141,7 @@ for dest, dep, ret in pairs:
     ax.set_ylabel("min round-trip price ($)")
     fig.autofmt_xdate()
     plt.tight_layout()
-    plt.show()
+    _emit(fig, f"thesisB_{dest}_{dep}_{ret}")
 
     diffs = piv.diff().dropna()
     if len(diffs) >= 2 and diffs.shape[1] == 2:

@@ -4,5 +4,6 @@ __pycache__/
 data/raw/
 *.csv
 *.parquet
+notebooks/figures/
 .DS_Store
 .vscode/
