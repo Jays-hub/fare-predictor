@@ -15,27 +15,30 @@ S1 = "2026-06-05T10:00:00+00:00"
 S2 = "2026-06-06T10:00:00+00:00"
 
 
-def _row(observed_at, carrier, price, dep_hour, dep_minute, stops=0, nonstop=True):
+def _row(observed_at, carrier, price, dep_hour, dep_minute, stops=0, nonstop=True,
+         price_level="typical"):
     return {
         "observed_at": observed_at, "origin": "ATL", "dest": "MCO",
         "dep_date": "2026-06-26", "ret_date": "2026-06-29",
         "carrier": carrier, "cabin": "economy", "price": price,
         "stops": stops, "nonstop": nonstop, "duration_min": 101,
         "dep_hour": dep_hour, "dep_minute": dep_minute, "dep_dow": "Fri",
+        "price_level": price_level,
     }
 
 
 @pytest.fixture
 def df():
     rows = [
+        # price_level is per-snapshot (per query): typical at S1, low at S2.
         # Frontier: redeye + evening, both snapshots; min moves 120 -> 130.
         _row(S1, "Frontier", 120, 5, 5),
         _row(S1, "Frontier", 140, 20, 21, stops=1, nonstop=False),
-        _row(S2, "Frontier", 130, 5, 5),
-        _row(S2, "Frontier", 140, 20, 21, stops=1, nonstop=False),
+        _row(S2, "Frontier", 130, 5, 5, price_level="low"),
+        _row(S2, "Frontier", 140, 20, 21, stops=1, nonstop=False, price_level="low"),
         # Delta: one departure; min moves 180 -> 175.
         _row(S1, "Delta", 180, 8, 0),
-        _row(S2, "Delta", 175, 8, 0),
+        _row(S2, "Delta", 175, 8, 0, price_level="low"),
     ]
     return T._coerce_types(pd.DataFrame(rows))
 
@@ -66,6 +69,10 @@ def test_carrier_min_series(df):
     delta = mins[mins.carrier == "Delta"].sort_values("observed_at")
     assert delta["price"].tolist() == [180, 175]
     assert delta["n_flights"].tolist() == [1, 1]
+
+    # price_level (Google's per-query verdict) is carried through unchanged.
+    assert frontier["price_level"].tolist() == ["typical", "low"]
+    assert delta["price_level"].tolist() == ["typical", "low"]
 
     # days_to_dep on the UTC calendar date: Jun 5/6 -> Jun 26 = 21/20 days.
     assert sorted(frontier["days_to_dep"].tolist()) == [20, 21]

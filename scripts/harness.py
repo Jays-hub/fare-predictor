@@ -154,6 +154,19 @@ def fixed_days_out(n: int) -> Policy:
     return policy
 
 
+def buy_iff_google_low(history: pd.DataFrame) -> bool:
+    """Buy the moment Google's own verdict for this query says the fare is "low".
+
+    This is the must-beat reference baseline from principle #2: if a model can't
+    beat "just trust Google's low/typical/high label," it isn't earning its keep.
+    price_level is nullable (un-backfillable before it shipped 2026-06-10) and no
+    "low" has been observed yet, so on the current panel this never fires and
+    degrades to a deadline buy — an all-"wait" result here is expected, not a bug.
+    """
+    pl = history["price_level"].iloc[-1]
+    return isinstance(pl, str) and pl.lower() == "low"
+
+
 def buy_below_trailing_median(frac: float = 1.0, min_history: int = 2) -> Policy:
     """Buy when the current fare is <= `frac` x the median of all PRIOR snapshots.
 
@@ -178,6 +191,7 @@ BASELINES: dict[str, Policy] = {
     "fixed_14d_out": fixed_days_out(14),
     "below_trailing_median": buy_below_trailing_median(1.0),
     "dip_5pct_below_median": buy_below_trailing_median(0.95),
+    "google_says_low": buy_iff_google_low,
 }
 
 

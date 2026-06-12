@@ -101,6 +101,10 @@ def carrier_min_series(df: pd.DataFrame) -> pd.DataFrame:
         price=("price", "min"),
         n_flights=("price", "size"),
         nonstop_available=("nonstop", "max"),
+        # price_level is Google's per-QUERY verdict (one value per route x
+        # date-pair x snapshot), so it's identical across a group's rows —
+        # "first" carries it through unchanged, not flight-specific.
+        price_level=("price_level", "first"),
     )
     out["days_to_dep"] = _days_to_dep(out["dep_date"], out["observed_at"])
     out["itinerary"] = itinerary_id(out)

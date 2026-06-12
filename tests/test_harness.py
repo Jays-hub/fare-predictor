@@ -15,12 +15,12 @@ import harness as H
 import trajectories as T
 
 
-def _raw(observed_at, dest, dep, ret, carrier, price):
+def _raw(observed_at, dest, dep, ret, carrier, price, price_level=None):
     return {
         "observed_at": observed_at, "origin": "ATL", "dest": dest,
         "dep_date": dep, "ret_date": ret, "carrier": carrier, "cabin": "economy",
         "price": price, "stops": 0, "nonstop": True, "duration_min": 101,
-        "dep_hour": 8, "dep_minute": 0, "dep_dow": "Fri", "price_level": None,
+        "dep_hour": 8, "dep_minute": 0, "dep_dow": "Fri", "price_level": price_level,
     }
 
 
@@ -87,6 +87,30 @@ def test_below_trailing_median_catches_the_dip(mins):
     s = H.summarize(H.simulate(mins, policy))
     assert s["total_saved_vs_buynow"] == -10      # +20 (MCO) - 30 (LAS)
     assert s["pct_oracle_captured"] == -0.5       # -10 / 20
+
+
+def test_buy_iff_google_low():
+    # Google's verdict goes typical -> typical -> low; the policy buys the moment
+    # it sees "low" (snapshot 3, price 195), regardless of the price path.
+    rows = [
+        _raw("2026-06-05T10:00:00+00:00", "MCO", "2026-06-26", "2026-06-29", "Delta", 200, "typical"),
+        _raw("2026-06-06T10:00:00+00:00", "MCO", "2026-06-26", "2026-06-29", "Delta", 190, "typical"),
+        _raw("2026-06-07T10:00:00+00:00", "MCO", "2026-06-26", "2026-06-29", "Delta", 195, "low"),
+    ]
+    mins = T.carrier_min_series(T._coerce_types(pd.DataFrame(rows)))
+    out = H.simulate(mins, H.buy_iff_google_low).iloc[0]
+    assert out["policy_price"] == 195
+    assert out["buy_days_to_dep"] == 19
+    assert out["saved_vs_buynow"] == 5   # 200 -> 195
+
+
+def test_buy_iff_google_low_never_fires_without_a_low(mins):
+    # The real-panel state: no "low" verdict (all None here) -> never buys ->
+    # forced deadline purchase, identical to never_buy. Expected, not a bug.
+    low = _by_itin(H.simulate(mins, H.buy_iff_google_low))
+    deadline = _by_itin(H.simulate(mins, H.never_buy))
+    assert low["MCO"]["policy_price"] == deadline["MCO"]["policy_price"]
+    assert low["LAS"]["policy_price"] == deadline["LAS"]["policy_price"]
 
 
 def test_fixed_days_out(mins):
