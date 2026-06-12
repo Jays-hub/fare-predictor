@@ -1,0 +1,37 @@
+name: mistake-fare-alarm
+
+# Runs right after each collection cycle COMPLETES, against the just-written
+# panel. We trigger on workflow_run rather than a fixed cron because GitHub
+# Actions delays scheduled jobs 1-4h: a "30 min after 10:00" cron would in
+# practice fire BEFORE that day's collection landed and judge a ~12h-stale
+# panel. workflow_run ties us to the real completion instead.
+#
+# Exit-code semantics are INVERTED vs. the freshness monitor: a non-zero exit
+# (= a deal was found) fails the run on purpose so GitHub sends a failure email.
+# Silence is the normal, healthy state; an email here means "go buy".
+on:
+  workflow_run:
+    workflows: ["collect-fares"]   # the name: of collect.yml
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        # Detector needs psycopg (DB load) + pandas (reshaping). Pinned to match
+        # requirements.txt, the pinning source of truth.
+        run: pip install "psycopg[binary]==3.3.4" "pandas==3.0.3"
+      - name: Check for mistake fares
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/check_deals.py
