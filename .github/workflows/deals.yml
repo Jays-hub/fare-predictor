@@ -1,0 +1,32 @@
+name: mistake-fare-alarm
+
+# Runs ~30 min after each collection cycle, against the just-written panel.
+# Exit-code semantics are INVERTED vs. the freshness monitor: a non-zero exit
+# (= a deal was found) fails the run on purpose so GitHub sends a failure email.
+# Silence is the normal, healthy state; an email here means "go buy".
+on:
+  schedule:
+    - cron: "30 10 * * *"   # ~30 min after the 10:00 UTC collection
+    - cron: "30 22 * * *"   # ~30 min after the 22:00 UTC collection
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        # Detector needs psycopg (DB load) + pandas (reshaping). Pinned to match
+        # requirements.txt, the pinning source of truth.
+        run: pip install "psycopg[binary]==3.3.4" "pandas==3.0.3"
+      - name: Check for mistake fares
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/check_deals.py
