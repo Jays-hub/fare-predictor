@@ -95,8 +95,10 @@ def fetch_with_retry(
                 passengers=Passengers(adults=1),
             )
         except Exception as e:
-            # RuntimeError = the "Loading results" stub; AssertionError = non-200.
-            # Truncate because the RuntimeError message embeds the whole page dump.
+            # Two known RuntimeError flavors, both intermittent blocking (not bugs):
+            # the "Loading results" stub, and "No flights found" where Google
+            # returns its HOMEPAGE as a decoy instead of results. AssertionError =
+            # non-200. Truncate: these messages embed the whole page dump.
             log.warning("attempt %d/%d raised %s: %s",
                         attempt, max_attempts, type(e).__name__, str(e)[:120])
             result = None
